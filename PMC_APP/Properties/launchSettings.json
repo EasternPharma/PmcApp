@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "PMC_APP": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
