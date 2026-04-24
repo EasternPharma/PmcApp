@@ -9,6 +9,7 @@ void Guidelines()
     Console.WriteLine("4. Apply Filter on All JSON Files");
     Console.WriteLine("5. Search for Validation PMC Data");
     Console.WriteLine("6. Statistics");
+    Console.WriteLine("7. PMC IDs");
 
     Console.Write("Enter your choice item from list: ");
     var _choice = Console.ReadLine();
@@ -33,6 +34,9 @@ void Guidelines()
                 break;
             case 6:
                 Statistics();
+                break;
+            case 7:
+                PmcIDs();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -127,6 +131,14 @@ void Statistics()
     string JsonDirPath = @"E:\PMC\2026\1_JSON";
     PmcStatistics pmcStatistics = new PmcStatistics(JsonDirPath);
     pmcStatistics.CalculateStatistics();
+}
+#endregion
+
+#region #7 Method7: PMC IDs
+void PmcIDs()
+{
+    PmcArticleIDs pmcArticleIDs = new PmcArticleIDs();
+    var ids = pmcArticleIDs.GetRemindPmcIDs();
 }
 #endregion
 

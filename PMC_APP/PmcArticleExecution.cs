@@ -115,7 +115,3 @@ public class PmcArticleExecution : IDisposable
             $"{sw.Elapsed.TotalSeconds:F3}s | {Environment.ProcessorCount} cores");
     }
 }
-}
-}
-}
-}
