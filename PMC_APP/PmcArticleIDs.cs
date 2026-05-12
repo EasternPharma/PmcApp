@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using MongoDB.Driver;
+using Newtonsoft.Json;
 using PMC_APP.DTOs;
 
 namespace PMC_APP;
@@ -8,9 +9,9 @@ public class PmcArticleIDs
     public string JsonDirPath { get; set; }
     public string PmcAllIDsPath { get; set; }
     public string RemindPmcIdsPath { get; set; }
-    public List<int> AllPmcIds { get; set; }
-    public List<int> ExtractJsonPmcIds { get; set; }
-    public List<int> RemindPmcIds { get; set; }
+    public List<int> AllPmcIds { get; set; } = new();
+    public List<int> ExtractJsonPmcIds { get; set; } = new();
+    public List<int> RemindPmcIds { get; set; } = new();
     public PmcArticleIDs()
     {
         JsonDirPath = @"E:\PMC\2026\1_JSON";
@@ -81,5 +82,29 @@ public class PmcArticleIDs
         Console.WriteLine("Successfully wrote reminder PMC IDs to file.");
 
         return RemindPmcIds;
+    }
+
+    public void GetRemindPmcIds_ingredient()
+    {
+        var client = new MongoClient("mongodb://localhost:27017");
+        var database = client.GetDatabase("pmc");
+        var articles = database.GetCollection<PmcIndexedArticleSummary>("simple_articles");
+
+        List<int> pmcIds = articles
+            .Find(FilterDefinition<PmcIndexedArticleSummary>.Empty)
+            .Project(x => x.PmcId)
+            .ToList();
+
+        string pmcIdsPath = @"E:\PMC\ingredient_pmc_ids.txt";
+        List<int> ingredientPmcIds = File.ReadAllLines(pmcIdsPath)
+            .Select(x => int.Parse(x.Trim().ToLowerInvariant().Replace("pmc", "")))
+            .Distinct()
+            .ToList();
+
+        List<int> remindPmcIds = ingredientPmcIds
+            .Except(pmcIds)
+            .ToList();
+
+        File.WriteAllLines(@"E:\PMC\ingredient_remind_pmc_ids.txt", remindPmcIds.Select(x => x.ToString()));
     }
 }

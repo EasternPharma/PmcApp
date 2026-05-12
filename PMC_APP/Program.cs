@@ -1,7 +1,8 @@
-﻿using PMC_APP;
+﻿using Newtonsoft.Json;
+using PMC_APP;
 
 #region GuidLines
-void Guidelines()
+async Task GuidelinesAsync()
 {
     Console.WriteLine("1. Extract Test");
     Console.WriteLine("2. Extract All .tar.gz Files");
@@ -10,10 +11,11 @@ void Guidelines()
     Console.WriteLine("5. Search for Validation PMC Data");
     Console.WriteLine("6. Statistics");
     Console.WriteLine("7. PMC IDs");
+    Console.WriteLine("8. Compare PMC search TXT results vs DB (Xml bulk + scraped summaries)");
 
     Console.Write("Enter your choice item from list: ");
-    var _choice = Console.ReadLine();
-    if (int.TryParse(_choice, out int choice))
+    var choiceInput = Console.ReadLine();
+    if (int.TryParse(choiceInput, out int choice))
     {
         switch (choice)
         {
@@ -37,6 +39,9 @@ void Guidelines()
                 break;
             case 7:
                 PmcIDs();
+                break;
+            case 8:
+                await Method8CompareTxtToDatabaseAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -138,8 +143,77 @@ void Statistics()
 void PmcIDs()
 {
     PmcArticleIDs pmcArticleIDs = new PmcArticleIDs();
-    var ids = pmcArticleIDs.GetRemindPmcIDs();
+    // var ids = pmcArticleIDs.GetRemindPmcIDs();
+    pmcArticleIDs.GetRemindPmcIds_ingredient();
 }
 #endregion
 
-Guidelines();
+#region #8 Method8: Compare PMC search TXT files vs MongoDB (Xml bulk + scraped)
+/// <summary>
+/// For each search query, reads a TXT of PMC IDs, ensures summary indexes exist, then writes a JSON report next to the TXT.
+/// </summary>
+async Task Method8CompareTxtToDatabaseAsync()
+{
+    string xmlBulkJsonRoot = @"E:\PMC\2026\1_JSON";
+
+    string mongoHost = "localhost";
+    int mongoPort = 27017;
+    string mongoDatabase = "pmc";
+    string mongoArticlesCollection = "articles";
+    string mongoSummariesCollection = "simple_articles";
+
+    string searchResultsDirectory = @"E:\PMC\2026\Task8_Compare_PMC_Search\PMC_Search_Results\";
+    Dictionary<string, string> searchQueryToTxtFileName = new Dictionary<string, string>
+    {
+        //["BIOTIN Maintain support hair growth"] = "BIOTIN Maintain support hair growth.txt",
+        //["ASCORBIC ACID Maintain support collagen formation"] = "ASCORBIC ACID Maintain support collagen formation.txt",
+        //["PUERARIA LOBATA Helps decrease reduce relieve symptoms of occasional hangovers"] = "PUERARIA LOBATA  hangovers.txt",
+        //["LILIUM LONGIFLORUM Soothe relieve skin inflammation"] = "LILIUM LONGIFLORUM Soothe relieve skin inflammation_gpt.txt",
+        ["Withania somnifera sleep"] = "Withania somnifera sleep.txt",
+        ["allium sativum immunity system"] = "allium sativum immunity system.txt",
+        ["magnesium glycinate improves sleep"] = "magnesium glycinate improves sleep.txt",
+        ["chamomile improve sleep"] = "chamomile improve sleep.txt",
+        ["echium vulgare anti-inflammatory"] = "echium vulgare anti-inflammatory.txt",
+        ["cholecalciferol immune system"] = "cholecalciferol immune system.txt",
+        ["vitamin b12 cognitive function"] = "vitamin b12 cognitive function.txt",
+        ["vitamin b1 energy"] = "vitamin b1 energy.txt",
+    };
+
+    var settings = new PmcArticleTxtDbCompareSettings
+    {
+        MongoHost = mongoHost,
+        MongoPort = mongoPort,
+        DatabaseName = mongoDatabase,
+        ArticlesCollectionName = mongoArticlesCollection,
+        SummariesCollectionName = mongoSummariesCollection,
+        XmlBulkJsonRootPath = xmlBulkJsonRoot,
+    };
+
+    using var comparer = new PmcArticleTxtDbComparer(settings);
+    await comparer.EnsureSummariesReadyAsync().ConfigureAwait(false);
+
+    foreach (var entry in searchQueryToTxtFileName)
+    {
+        string searchQueryLabel = entry.Key;
+        string txtFileName = entry.Value;
+        string txtPath = Path.Combine(searchResultsDirectory, txtFileName);
+        if (!File.Exists(txtPath))
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"Skip (file missing): {txtPath}");
+            Console.ResetColor();
+            continue;
+        }
+
+        var lines = await File.ReadAllLinesAsync(txtPath).ConfigureAwait(false);
+        var pmcNumericIds = PmcArticleTxtDbComparer.ParsePmcNumericIdsFromLines(lines);
+        var report = await comparer.CompareSearchResultTxtAsync(pmcNumericIds, searchQueryLabel).ConfigureAwait(false);
+
+        string jsonPath = Path.Combine(searchResultsDirectory, Path.GetFileNameWithoutExtension(txtFileName) + ".json");
+        await File.WriteAllTextAsync(jsonPath, JsonConvert.SerializeObject(report, Formatting.Indented)).ConfigureAwait(false);
+        Console.WriteLine($"Wrote report: {jsonPath}");
+    }
+}
+#endregion
+
+await GuidelinesAsync();
