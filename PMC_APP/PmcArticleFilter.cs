@@ -1,40 +1,51 @@
 ﻿using ExcelDataReader;
+using MongoDB.Driver;
 using Newtonsoft.Json;
 using PMC_APP.DTOs;
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Data;
-using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 
 namespace PMC_APP;
 
 public class PmcArticleFilter
 {
     #region Initialization
-    private string ExclusionExcelPath { get; set; }
     public List<string> ExclusionKeywords { get; set; }
     public Dictionary<string, string> Keyword2Category { get; set; }
     public List<FileInfo> ArticleJsonFile { get; set; }
-
+    public PmcArticleFilterSettingsDTO Settings { get; set; }
     // Pre-compiled regex patterns, built once for O(1) reuse per article
     private List<(string Keyword, string Category, Regex Pattern)> _compiledPatterns = new();
-    private string OutputDirectory { get; set; }
+    private IMongoCollection<ArticleLabelDTO>? _mongoCollection;
 
-    public PmcArticleFilter(string dirPath, string outputDir)
+    public PmcArticleFilter(PmcArticleFilterSettingsDTO settings)
     {
-        ArticleJsonFile = Directory.GetFiles(dirPath, "*.json", SearchOption.AllDirectories)
+        Settings = settings;
+        ArticleJsonFile = Directory.GetFiles(settings.JsonFilesDirectoryPath, "*.json", SearchOption.AllDirectories)
             .Select(x => new FileInfo(x)).ToList();
-        ExclusionExcelPath = "D:\\PMC\\Dataset\\2026\\PMC safe-exclusion keywords.csv";
         LoadExclusionKeywords();
-        OutputDirectory = outputDir;
-        if (!Directory.Exists(OutputDirectory))
+
+        if (settings.OutputType == PmcArticleFilterOutputTypes.JsonFile)
         {
-            Directory.CreateDirectory(OutputDirectory);
+            if (!Directory.Exists(settings.OutputDirectoryPath))
+                Directory.CreateDirectory(settings.OutputDirectoryPath);
+        }
+        else if (settings.OutputType == PmcArticleFilterOutputTypes.Mongodb)
+        {
+            var mongoClient = new MongoClient($"mongodb://{settings.MongodbHost}:{settings.MongodbPort}");
+            var database = mongoClient.GetDatabase(settings.MongodbDatabaseName);
+
+            var existingCollections = database.ListCollectionNames().ToList();
+            if (!existingCollections.Contains(settings.MongodbCollectionName))
+                database.CreateCollection(settings.MongodbCollectionName);
+
+            _mongoCollection = database.GetCollection<ArticleLabelDTO>(settings.MongodbCollectionName);
+
+            // Ensure a unique index on PmcId to support upserts and prevent duplicates
+            var indexKeys = Builders<ArticleLabelDTO>.IndexKeys.Ascending(a => a.PmcId);
+            var indexOptions = new CreateIndexOptions { Unique = true, Background = true };
+            _mongoCollection.Indexes.CreateOne(new CreateIndexModel<ArticleLabelDTO>(indexKeys, indexOptions));
         }
     }
     #endregion
@@ -44,7 +55,7 @@ public class PmcArticleFilter
     {
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
         this.Keyword2Category = new Dictionary<string, string>();
-        this.Keyword2Category = ReadExcelToDictionary(this.ExclusionExcelPath);
+        this.Keyword2Category = ReadExcelToDictionary(Settings.ExclusionExcelPath);
         this.ExclusionKeywords = Keyword2Category.Keys.OrderBy(x => x).ToList();
 
         // Build compiled patterns once — word-boundary aware, case-insensitive
@@ -141,11 +152,82 @@ public class PmcArticleFilter
         return results.ToList();
     }
 
+    private List<ArticleLabelDTO> ApplyFiltersLabel(List<ArticleDTO> articles)
+    {
+        var results = new ConcurrentBag<ArticleLabelDTO>();
+
+        Parallel.ForEach(articles, article =>
+        {
+            // Combine title + abstract into one searchable string
+            // Using a space separator (non-word char) so word boundaries remain intact
+            var text = string.Concat(
+                article.Title ?? string.Empty,
+                " ",
+                article.AbstractText ?? string.Empty
+            );
+
+            var matchedKeywords = new List<string>();
+            var matchedCategories = new HashSet<string>();
+
+            foreach (var (keyword, category, pattern) in _compiledPatterns)
+            {
+                if (pattern.IsMatch(text))
+                {
+                    matchedKeywords.Add(keyword);
+                    if (!string.IsNullOrEmpty(category))
+                        matchedCategories.Add(category);
+                }
+            }
+
+            //if (matchedKeywords.Count > 0)
+            //{
+            var articleLabel = new ArticleLabelDTO
+            {
+                PmcId = article.PmcId,
+                PmId = article.PmId,
+                Doi = article.Doi,
+                Title = article.Title,
+                Category = article.Category,
+                Journal = article.Journal,
+                Publisher = article.Publisher,
+                Volume = article.Volume,
+                Issue = article.Issue,
+                ISSN = article.ISSN,
+                FPage = article.FPage,
+                LPage = article.LPage,
+                Authors = article.Authors,
+                PublishDate = article.PublishDate,
+                AbstractText = article.AbstractText,
+                Keywords = article.Keywords,
+                Sections = article.Sections,
+                ExcludedKeywords = matchedKeywords,
+                ExcludedCategories = matchedCategories.Distinct().ToList(),
+                HasFullText = article.Sections != null && article.Sections.Count > 0,
+                SourceType = 1, // 1: Article from XML bulk download
+                HasAbstract = !string.IsNullOrEmpty(article.AbstractText),
+                IsFiltered = true,
+                IsHumanStudy = matchedKeywords.Count == 0, // if keywords > 0 => not a human study
+            };
+
+            results.Add(articleLabel);
+            //}
+        });
+
+        return results.ToList();
+    }
+
     private List<ArticleFilterDTO> FilterJsonFile(FileInfo fileInfo)
     {
         string jsonContent = File.ReadAllText(fileInfo.FullName);
-        var articles = JsonConvert.DeserializeObject<List<ArticleDTO>>(jsonContent);
+        var articles = JsonConvert.DeserializeObject<List<ArticleDTO>>(jsonContent) ?? new List<ArticleDTO>();
         return ApplyFilters(articles);
+    }
+
+    private List<ArticleLabelDTO> FilterJsonFileLabel(FileInfo fileInfo)
+    {
+        string jsonContent = File.ReadAllText(fileInfo.FullName);
+        var articles = JsonConvert.DeserializeObject<List<ArticleDTO>>(jsonContent) ?? new List<ArticleDTO>();
+        return ApplyFiltersLabel(articles);
     }
 
     private const int PartSize = 100_000;
@@ -161,7 +243,7 @@ public class PmcArticleFilter
             for (int i = 0; i < partCount; i++)
             {
                 var chunk = results.Skip(i * PartSize).Take(PartSize).ToList();
-                outputPath = Path.Combine(OutputDirectory, $"Part_{i + 1}.json");
+                outputPath = Path.Combine(Settings.OutputDirectoryPath, $"Part_{i + 1}.json");
                 File.WriteAllText(outputPath, JsonConvert.SerializeObject(chunk, Formatting.None));
             }
 
@@ -170,6 +252,55 @@ public class PmcArticleFilter
         catch (Exception ex)
         {
             Console.WriteLine($"Error writing filtered results to {outputPath}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private bool InsertToMongoDB(List<ArticleLabelDTO> results)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB collection is not initialized. Set OutputType to Mongodb and provide connection settings.");
+            Console.ResetColor();
+            return false;
+        }
+
+        try
+        {
+            int upserted = 0;
+            int modified = 0;
+            const int batchSize = 1000;
+            int totalBatches = (int)Math.Ceiling(results.Count / (double)batchSize);
+
+            for (int b = 0; b < totalBatches; b++)
+            {
+                var batch = results.Skip(b * batchSize).Take(batchSize).ToList();
+                var writeModels = batch.Select(article =>
+                {
+                    var filter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.PmcId, article.PmcId);
+                    return new ReplaceOneModel<ArticleLabelDTO>(filter, article) { IsUpsert = true };
+                }).ToList<WriteModel<ArticleLabelDTO>>();
+
+                var bulkResult = _mongoCollection.BulkWrite(writeModels, new BulkWriteOptions { IsOrdered = false });
+                upserted += (int)bulkResult.Upserts.Count;
+                modified += (int)bulkResult.ModifiedCount;
+
+                int percent = (int)((double)(b + 1) / totalBatches * 100);
+                Console.Write($"\r  Saving to MongoDB: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  (batch {b + 1}/{totalBatches})  ");
+            }
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"  Inserted: {upserted}  |  Updated: {modified}  |  Total: {results.Count}");
+            Console.ResetColor();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"MongoDB write error: {ex.Message}");
+            Console.ResetColor();
             return false;
         }
     }
@@ -197,7 +328,32 @@ public class PmcArticleFilter
 
         bool success = WriteFilteredResults(allResults);
         if (success)
-            Console.WriteLine($"Saved to: {OutputDirectory}");
+            Console.WriteLine($"Saved to: {Settings.OutputDirectoryPath}");
+
+    }
+    public void FilterAllJsonFilesLabel()
+    {
+        int total = ArticleJsonFile.Count;
+        int done = 0;
+        int totalInserted = 0;
+
+        foreach (var fileInfo in ArticleJsonFile)
+        {
+            var batch = FilterJsonFileLabel(fileInfo);
+
+            done++;
+            int percent = (int)((double)done / total * 100);
+            Console.Write($"\r  Filtering: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({done}/{total})  ");
+
+            bool success = InsertToMongoDB(batch);
+            if (success)
+                totalInserted += batch.Count;
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Successfully filtered and stored {totalInserted} articles to: {Settings.MongodbCollectionName}");
+        Console.ResetColor();
     }
     #endregion
 }

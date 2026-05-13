@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using PMC_APP;
+using PMC_APP.DTOs;
 
 #region GuidLines
 async Task GuidelinesAsync()
@@ -103,9 +104,14 @@ void EctractTarGzFiles()
 #region #3 Method3 Filter Json files base on keywords
 void TestFilterJsonFile()
 {
-    string DirPath = @"E:\PMC\2026\test\JSON";
-    string outputDir = @"E:\PMC\2026\test\Filtered";
-    var filter = new PmcArticleFilter(DirPath, outputDir);
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        JsonFilesDirectoryPath = @"E:\PMC\2026\test\JSON",
+        OutputDirectoryPath = @"E:\PMC\2026\test\Filtered",
+        OutputType = PmcArticleFilterOutputTypes.JsonFile,
+        ExclusionExcelPath = @"E:\PMC\2026\exclusion_list.xlsx"
+    };
+    var filter = new PmcArticleFilter(settings);
     filter.FilterAllJsonFiles();
 }
 #endregion
@@ -113,10 +119,18 @@ void TestFilterJsonFile()
 #region #4 Method4: Apply filter on all JSON files
 void ApplyFilterOnAllJsonFiles()
 {
-    string DirPath = @"E:\PMC\2026\1_JSON";
-    string outputDir = @"E:\PMC\2026\2_Filtered_JSON\JSON\";
-    var filter = new PmcArticleFilter(DirPath, outputDir);
-    filter.FilterAllJsonFiles();
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        JsonFilesDirectoryPath = @"E:\PMC\2026\1_JSON",
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        ExclusionExcelPath = @"D:\PMC\Dataset\2026\PMC safe-exclusion keywords.csv",
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbCollectionName = "all_articles"
+    };
+    var filter = new PmcArticleFilter(settings);
+    filter.FilterAllJsonFilesLabel();
 }
 #endregion
 

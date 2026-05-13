@@ -13,7 +13,6 @@ public class ArticleFilterDTO
     public List<string> Categories { get; set; }
     public string Title { get; set; }
     public string Link { get; set; }
-
 }
 
 public class SearchArticleDTO : ArticleFilterDTO
