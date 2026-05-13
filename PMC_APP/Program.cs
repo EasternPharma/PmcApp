@@ -13,6 +13,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("6. Statistics");
     Console.WriteLine("7. PMC IDs");
     Console.WriteLine("8. Compare PMC search TXT results vs DB (Xml bulk + scraped summaries)");
+    Console.WriteLine("9. Apply Filter on Scraped MongoDB Articles");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -43,6 +44,9 @@ async Task GuidelinesAsync()
                 break;
             case 8:
                 await Method8CompareTxtToDatabaseAsync();
+                break;
+            case 9:
+                await ApplyFilterOnAllJsonFiles_scrapAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -127,10 +131,27 @@ void ApplyFilterOnAllJsonFiles()
         MongodbHost = "localhost",
         MongodbPort = 27017,
         MongodbDatabaseName = "pmc",
-        MongodbCollectionName = "all_articles"
+        MongodbOutputCollectionName = "all_articles"
     };
     var filter = new PmcArticleFilter(settings);
     filter.FilterAllJsonFilesLabel();
+}
+
+async Task ApplyFilterOnAllJsonFiles_scrapAsync()
+{
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        MongodbInputCollectionName = "articles",
+        MongodbArticleListCollectionName = "article_list",
+        MongodbOutputCollectionName = "all_articles",
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        ExclusionExcelPath = @"D:\PMC\Dataset\2026\PMC safe-exclusion keywords.csv",
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.FilterAllMongoDbLabelAsync();
 }
 #endregion
 

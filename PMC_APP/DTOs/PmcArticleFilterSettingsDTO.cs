@@ -22,6 +22,8 @@ public class PmcArticleFilterSettingsDTO
     public string MongodbHost { get; set; }
     public int MongodbPort { get; set; }
     public string MongodbDatabaseName { get; set; }
-    public string MongodbCollectionName { get; set; }
+    public string MongodbInputCollectionName { get; set; }
+    public string MongodbArticleListCollectionName { get; set; }
+    public string MongodbOutputCollectionName { get; set; }
 
 }

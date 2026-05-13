@@ -4,6 +4,21 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace PMC_APP.DTOs;
 
 /// <summary>
+/// Lightweight read model for the <c>article_list</c> collection.
+/// Only two fields are projected: <c>_id</c> (pmc_id) and <c>user</c>.
+/// </summary>
+[BsonIgnoreExtraElements]
+public sealed class MongoArticleListDocument
+{
+    [BsonId]
+    [BsonRepresentation(BsonType.Int32)]
+    public int PmcId { get; set; }
+
+    [BsonElement("user")]
+    public string? User { get; set; }
+}
+
+/// <summary>
 /// BSON field contract for the MongoDB <c>articles</c> collection (snake_case, int32 <c>_id</c>).
 /// </summary>
 [BsonIgnoreExtraElements]
