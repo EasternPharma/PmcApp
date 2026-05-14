@@ -49,10 +49,17 @@ public class PmcArticleFilter
 
             _mongoCollection = database.GetCollection<ArticleLabelDTO>(settings.MongodbOutputCollectionName);
 
-            // Ensure a unique index on PmcId to support upserts and prevent duplicates
-            var indexKeys = Builders<ArticleLabelDTO>.IndexKeys.Ascending(a => a.PmcId);
-            var indexOptions = new CreateIndexOptions { Unique = true, Background = true };
-            _mongoCollection.Indexes.CreateOne(new CreateIndexModel<ArticleLabelDTO>(indexKeys, indexOptions));
+            // Ensure an index on PmcId exists; skip creation if any index on that field is already present
+            var existingIndexes = _mongoCollection.Indexes.List().ToList();
+            bool pmcIdIndexExists = existingIndexes.Any(idx =>
+                idx.Contains("key") && idx["key"].AsBsonDocument.Contains("PmcId"));
+
+            if (!pmcIdIndexExists)
+            {
+                var indexKeys = Builders<ArticleLabelDTO>.IndexKeys.Ascending(a => a.PmcId);
+                var indexOptions = new CreateIndexOptions { Unique = true, Background = true };
+                _mongoCollection.Indexes.CreateOne(new CreateIndexModel<ArticleLabelDTO>(indexKeys, indexOptions));
+            }
 
             if (!string.IsNullOrWhiteSpace(settings.MongodbInputCollectionName))
                 _mongoInputCollection = database.GetCollection<MongoPmcArticleDocument>(settings.MongodbInputCollectionName);
@@ -543,6 +550,137 @@ public class PmcArticleFilter
         });
 
         return results.ToList();
+    }
+    #endregion
+
+    #region Ingredient keyword filter
+    /// <summary>
+    /// Scans <c>all_articles</c> documents where <c>IsHumanStudy = true</c> and <c>HasFullText = false</c>,
+    /// matches Title + Abstract against ingredient keywords loaded from <paramref name="ingredientKeywordsFilePath"/>,
+    /// and patches each document with <c>IsIngredientReviewed</c>, <c>ContainsIngredient</c>, and <c>Ingredients</c>.
+    /// </summary>
+    public async Task FilterIngredientKeywordsAsync(
+        string ingredientKeywordsFilePath,
+        CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        // ── Step 1: load and compile ingredient keyword patterns ─────────────
+        Console.WriteLine($"Loading ingredient keywords from: {ingredientKeywordsFilePath}");
+        var ingredientPatterns = File.ReadLines(ingredientKeywordsFilePath)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(k => k.Length)
+            .Select(k => (
+                Keyword: k,
+                Pattern: new Regex(
+                    $@"\b{Regex.Escape(k)}\b",
+                    RegexOptions.IgnoreCase | RegexOptions.Compiled)
+            ))
+            .ToList();
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"  Ingredient keywords loaded: {ingredientPatterns.Count}");
+        Console.ResetColor();
+
+        // ── Step 2: count target documents ───────────────────────────────────
+        var targetFilter = Builders<ArticleLabelDTO>.Filter.And(
+            Builders<ArticleLabelDTO>.Filter.Eq(a => a.IsHumanStudy, true),
+            Builders<ArticleLabelDTO>.Filter.Eq(a => a.HasFullText, false));
+
+        long totalArticles = await _mongoCollection
+            .CountDocumentsAsync(targetFilter, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.WriteLine($"Target articles (IsHumanStudy=true, HasFullText=false): {totalArticles}");
+
+        // ── Step 3: keyset-paginate, match, and patch ─────────────────────────
+        const int pageSize = 10_000;
+        const int bulkBatchSize = 1_000;
+        int lastSeenId = 0;
+        long processedArticles = 0;
+        long totalUpdated = 0;
+
+        var sort = Builders<ArticleLabelDTO>.Sort.Ascending(a => a.PmcId);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageFilter = Builders<ArticleLabelDTO>.Filter.And(
+                targetFilter,
+                Builders<ArticleLabelDTO>.Filter.Gt(a => a.PmcId, lastSeenId));
+
+            List<ArticleLabelDTO> page = await _mongoCollection
+                .Find(pageFilter)
+                .Sort(sort)
+                .Limit(pageSize)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Count == 0)
+                break;
+
+            lastSeenId = page[^1].PmcId;
+
+            // ── match keywords in parallel ────────────────────────────────────
+            var updateModels = new ConcurrentBag<WriteModel<ArticleLabelDTO>>();
+
+            Parallel.ForEach(page, article =>
+            {
+                var text = string.Concat(
+                    article.Title ?? string.Empty,
+                    " ",
+                    article.AbstractText ?? string.Empty);
+
+                var matchedKeywords = new List<string>();
+                foreach (var (keyword, pattern) in ingredientPatterns)
+                {
+                    if (pattern.IsMatch(text))
+                        matchedKeywords.Add(keyword);
+                }
+
+                bool containsIngredient = matchedKeywords.Count > 0;
+
+                var update = Builders<ArticleLabelDTO>.Update
+                    .Set(a => a.IsIngredientReviewed, true)
+                    .Set(a => a.ContainsIngredient, containsIngredient)
+                    .Set(a => a.Ingredients, containsIngredient ? matchedKeywords : null);
+
+                var docFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.PmcId, article.PmcId);
+                updateModels.Add(new UpdateOneModel<ArticleLabelDTO>(docFilter, update));
+            });
+
+            // ── bulk-write in batches of 1000 ─────────────────────────────────
+            var modelList = updateModels.ToList();
+            for (int i = 0; i < modelList.Count; i += bulkBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = modelList.Skip(i).Take(bulkBatchSize).ToList<WriteModel<ArticleLabelDTO>>();
+                var bulkResult = await _mongoCollection
+                    .BulkWriteAsync(batch, new BulkWriteOptions { IsOrdered = false }, cancellationToken)
+                    .ConfigureAwait(false);
+                totalUpdated += bulkResult.ModifiedCount;
+            }
+
+            processedArticles += page.Count;
+            int percent = totalArticles > 0
+                ? (int)(processedArticles * 100 / totalArticles)
+                : 100;
+            Console.Write($"\r  Ingredient filter: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({processedArticles}/{totalArticles})  ");
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Ingredient review complete. Documents updated: {totalUpdated}");
+        Console.ResetColor();
     }
     #endregion
 }

@@ -26,4 +26,6 @@ public class PmcArticleFilterSettingsDTO
     public string MongodbArticleListCollectionName { get; set; }
     public string MongodbOutputCollectionName { get; set; }
 
+    public string? IngredientKeywordsFilePath { get; set; }
+
 }

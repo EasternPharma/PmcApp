@@ -14,6 +14,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("7. PMC IDs");
     Console.WriteLine("8. Compare PMC search TXT results vs DB (Xml bulk + scraped summaries)");
     Console.WriteLine("9. Apply Filter on Scraped MongoDB Articles");
+    Console.WriteLine("10. Ingredient Keyword Filter on all_articles");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -47,6 +48,9 @@ async Task GuidelinesAsync()
                 break;
             case 9:
                 await ApplyFilterOnAllJsonFiles_scrapAsync();
+                break;
+            case 10:
+                await FilterIngredientKeywordsAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -248,6 +252,24 @@ async Task Method8CompareTxtToDatabaseAsync()
         await File.WriteAllTextAsync(jsonPath, JsonConvert.SerializeObject(report, Formatting.Indented)).ConfigureAwait(false);
         Console.WriteLine($"Wrote report: {jsonPath}");
     }
+}
+#endregion
+
+#region #10 Method10: Ingredient keyword filter on all_articles
+async Task FilterIngredientKeywordsAsync()
+{
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        ExclusionExcelPath = @"D:\PMC\Dataset\2026\PMC safe-exclusion keywords.csv",
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        IngredientKeywordsFilePath = @"E:\PMC\ingredients_Nhmrc_keys_uniq.txt",
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.FilterIngredientKeywordsAsync(settings.IngredientKeywordsFilePath!);
 }
 #endregion
 

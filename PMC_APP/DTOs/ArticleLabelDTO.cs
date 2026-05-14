@@ -1,5 +1,8 @@
-﻿namespace PMC_APP.DTOs;
+﻿using MongoDB.Bson.Serialization.Attributes;
 
+namespace PMC_APP.DTOs;
+
+[BsonIgnoreExtraElements]
 public class ArticleLabelDTO : ArticleDTO
 {
     /// <summary>
