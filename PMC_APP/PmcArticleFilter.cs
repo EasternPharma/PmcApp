@@ -31,6 +31,19 @@ public class PmcArticleFilter
                 .Select(x => new FileInfo(x)).ToList()
             : new List<FileInfo>();
 
+        // Read-only mode: skip exclusion keywords and write-setup (collection creation, indexes).
+        // Only connect to MongoDB and get the collection handle.
+        if (settings.ReadOnlyMode)
+        {
+            if (settings.OutputType == PmcArticleFilterOutputTypes.Mongodb)
+            {
+                var mongoClient = new MongoClient($"mongodb://{settings.MongodbHost}:{settings.MongodbPort}");
+                var database = mongoClient.GetDatabase(settings.MongodbDatabaseName);
+                _mongoCollection = database.GetCollection<ArticleLabelDTO>(settings.MongodbOutputCollectionName);
+            }
+            return;
+        }
+
         LoadExclusionKeywords();
 
         if (settings.OutputType == PmcArticleFilterOutputTypes.JsonFile)
@@ -550,6 +563,92 @@ public class PmcArticleFilter
         });
 
         return results.ToList();
+    }
+    #endregion
+
+    #region Task 11: Collect ingredient article PMC IDs and save to TXT
+    /// <summary>
+    /// Queries <c>all_articles</c> for documents where <c>ContainsIngredient = true</c>,
+    /// collects their integer PMC IDs, and writes one ID per line to
+    /// <see cref="PmcArticleFilterSettingsDTO.OutputTxtFilePath"/>.
+    /// </summary>
+    public async Task GetIngredientArticleIdsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        string outputPath = Settings.OutputTxtFilePath
+            ?? throw new InvalidOperationException("OutputTxtFilePath must be set in settings.");
+
+        // ── Step 1: query all articles where ContainsIngredient = true ────────
+        Console.WriteLine("Querying MongoDB for articles with ContainsIngredient = true …");
+
+        var queryFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.ContainsIngredient, true);
+
+        long totalCount = await _mongoCollection
+            .CountDocumentsAsync(queryFilter, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"  Matching articles found: {totalCount}");
+        Console.ResetColor();
+
+        // ── Step 2: keyset-paginate and collect PMC IDs ───────────────────────
+        const int pageSize = 10_000;
+        int lastSeenId = 0;
+        long processed = 0;
+        var pmcIds = new List<int>((int)Math.Min(totalCount, int.MaxValue));
+
+        var projection = Builders<ArticleLabelDTO>.Projection.Include(a => a.PmcId);
+        var sort = Builders<ArticleLabelDTO>.Sort.Ascending(a => a.PmcId);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageFilter = Builders<ArticleLabelDTO>.Filter.And(
+                queryFilter,
+                Builders<ArticleLabelDTO>.Filter.Gt(a => a.PmcId, lastSeenId));
+
+            var page = await _mongoCollection
+                .Find(pageFilter)
+                .Project<ArticleLabelDTO>(projection)
+                .Sort(sort)
+                .Limit(pageSize)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Count == 0)
+                break;
+
+            foreach (var doc in page)
+                pmcIds.Add(doc.PmcId);
+
+            lastSeenId = page[^1].PmcId;
+            processed += page.Count;
+
+            int percent = totalCount > 0 ? (int)(processed * 100 / totalCount) : 100;
+            Console.Write($"\r  Loading: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({processed}/{totalCount})  ");
+        }
+
+        Console.WriteLine();
+
+        // ── Step 3: save PMC IDs to TXT file ─────────────────────────────────
+        string? dir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+
+        await File.WriteAllLinesAsync(outputPath, pmcIds.Select(id => id.ToString()), cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Saved {pmcIds.Count} PMC IDs to: {outputPath}");
+        Console.ResetColor();
     }
     #endregion
 

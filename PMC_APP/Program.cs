@@ -15,6 +15,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("8. Compare PMC search TXT results vs DB (Xml bulk + scraped summaries)");
     Console.WriteLine("9. Apply Filter on Scraped MongoDB Articles");
     Console.WriteLine("10. Ingredient Keyword Filter on all_articles");
+    Console.WriteLine("11. Save Ingredient Article PMC IDs to TXT file");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -51,6 +52,9 @@ async Task GuidelinesAsync()
                 break;
             case 10:
                 await FilterIngredientKeywordsAsync();
+                break;
+            case 11:
+                await GetIngredientArticleIdsAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -270,6 +274,24 @@ async Task FilterIngredientKeywordsAsync()
     };
     var filter = new PmcArticleFilter(settings);
     await filter.FilterIngredientKeywordsAsync(settings.IngredientKeywordsFilePath!);
+}
+#endregion
+
+#region #11 Method11: Ingredient Articles to txt file
+async Task GetIngredientArticleIdsAsync()
+{
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        OutputTxtFilePath = @"E:\PMC\ingredient_article_ids.txt",
+        ReadOnlyMode = true,
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.GetIngredientArticleIdsAsync();
 }
 #endregion
 

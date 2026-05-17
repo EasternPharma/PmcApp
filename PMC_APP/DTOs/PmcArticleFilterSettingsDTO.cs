@@ -28,4 +28,15 @@ public class PmcArticleFilterSettingsDTO
 
     public string? IngredientKeywordsFilePath { get; set; }
 
+    /// <summary>
+    /// Output path for a plain-text file containing one PMC ID per line.
+    /// Used by task 11 (GetIngredientArticleIdsAsync).
+    /// </summary>
+    public string? OutputTxtFilePath { get; set; }
+
+    /// <summary>
+    /// When true, the constructor skips collection creation, index setup, and
+    /// exclusion keyword loading. Use for read-only tasks (e.g. task 11).
+    /// </summary>
+    public bool ReadOnlyMode { get; set; } = false;
 }
