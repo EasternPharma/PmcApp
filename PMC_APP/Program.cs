@@ -16,6 +16,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("9. Apply Filter on Scraped MongoDB Articles");
     Console.WriteLine("10. Ingredient Keyword Filter on all_articles");
     Console.WriteLine("11. Save Ingredient Article PMC IDs to TXT file");
+    Console.WriteLine("12. Update Articles from JSON Backup Folder");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -55,6 +56,9 @@ async Task GuidelinesAsync()
                 break;
             case 11:
                 await GetIngredientArticleIdsAsync();
+                break;
+            case 12:
+                await UpdateArticles();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -292,6 +296,24 @@ async Task GetIngredientArticleIdsAsync()
     };
     var filter = new PmcArticleFilter(settings);
     await filter.GetIngredientArticleIdsAsync();
+}
+#endregion
+
+#region #12 Method12: Update Articles from JSON backup folder to mongodb
+async Task UpdateArticles()
+{
+    string folderPath = @"E:\PMC\articles_ingredient_backup";
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        ReadOnlyMode = true,
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.UpdateArticlesFromJsonFolderAsync(folderPath);
 }
 #endregion
 

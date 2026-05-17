@@ -652,6 +652,125 @@ public class PmcArticleFilter
     }
     #endregion
 
+    #region Task 12: Update articles from JSON backup folder
+    /// <summary>
+    /// Loads all *.json files from <paramref name="folderPath"/>,
+    /// deserializes each file as <see cref="List{ArticleBackupDTO}"/> (snake_case JSON keys),
+    /// maps to <see cref="ArticleLabelDTO"/>, and upserts into the <c>all_articles</c>
+    /// MongoDB collection by PmcId.
+    /// </summary>
+    public async Task UpdateArticlesFromJsonFolderAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        // Step 1: list all *.json files in the folder
+        var jsonFiles = Directory.GetFiles(folderPath, "*.json", SearchOption.AllDirectories)
+            .Select(p => new FileInfo(p))
+            .ToList();
+
+        if (jsonFiles.Count == 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"No JSON files found in: {folderPath}");
+            Console.ResetColor();
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"Found {jsonFiles.Count} JSON file(s) in: {folderPath}");
+        Console.ResetColor();
+
+        int totalUpserted = 0;
+        int totalModified = 0;
+        int filesDone = 0;
+
+        // Step 2: process each file
+        foreach (var file in jsonFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string jsonContent = await File.ReadAllTextAsync(file.FullName, cancellationToken)
+                .ConfigureAwait(false);
+
+            // Deserialize using ArticleBackupDTO which has [JsonProperty] for snake_case keys
+            var backupArticles = JsonConvert.DeserializeObject<List<ArticleBackupDTO>>(jsonContent)
+                                 ?? new List<ArticleBackupDTO>();
+
+            if (backupArticles.Count == 0)
+            {
+                filesDone++;
+                continue;
+            }
+
+            // Map ArticleBackupDTO → ArticleLabelDTO
+            var articles = backupArticles.Select(a => new ArticleLabelDTO
+            {
+                PmcId = a.PmcId,
+                PmId = a.PmId.HasValue ? (int?)((int)a.PmId.Value) : null,
+                Doi = a.Doi,
+                Title = a.Title,
+                Category = a.Category,
+                Journal = a.Journal,
+                Publisher = a.Publisher,
+                Volume = a.Volume,
+                Issue = a.Issue,
+                ISSN = a.ISSN,
+                FPage = a.FPage,
+                LPage = a.LPage,
+                Authors = a.Authors,
+                PublishDate = a.PublishDate,
+                AbstractText = a.AbstractText,
+                Keywords = a.Keywords,
+                Sections = a.Sections ?? new Dictionary<string, string>(),
+                HasFullText = a.Sections != null && a.Sections.Count > 0,
+                HasAbstract = !string.IsNullOrEmpty(a.AbstractText),
+                IsFiltered = true,
+                SourceType = 2,
+            }).ToList();
+
+            // Step 3: upsert articles by PmcId in batches of 1000
+            const int batchSize = 1_000;
+            int totalBatches = (int)Math.Ceiling(articles.Count / (double)batchSize);
+
+            for (int b = 0; b < totalBatches; b++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var batch = articles.Skip(b * batchSize).Take(batchSize).ToList();
+                var writeModels = batch.Select(article =>
+                {
+                    var filter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.PmcId, article.PmcId);
+                    return new ReplaceOneModel<ArticleLabelDTO>(filter, article) { IsUpsert = true };
+                }).ToList<WriteModel<ArticleLabelDTO>>();
+
+                var bulkResult = await _mongoCollection
+                    .BulkWriteAsync(writeModels, new BulkWriteOptions { IsOrdered = false }, cancellationToken)
+                    .ConfigureAwait(false);
+
+                totalUpserted += (int)bulkResult.Upserts.Count;
+                totalModified += (int)bulkResult.ModifiedCount;
+            }
+
+            filesDone++;
+            int percent = (int)((double)filesDone / jsonFiles.Count * 100);
+            Console.Write($"\r  Updating: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({filesDone}/{jsonFiles.Count})  {file.Name}  ");
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Update complete. Inserted: {totalUpserted}  |  Updated: {totalModified}  |  Files processed: {filesDone}");
+        Console.ResetColor();
+    }
+    #endregion
+
     #region Ingredient keyword filter
     /// <summary>
     /// Scans <c>all_articles</c> documents where <c>IsHumanStudy = true</c> and <c>HasFullText = false</c>,
