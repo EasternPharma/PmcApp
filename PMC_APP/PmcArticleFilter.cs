@@ -771,7 +771,125 @@ public class PmcArticleFilter
     }
     #endregion
 
-    #region Ingredient keyword filter
+    #region Task 13: Re-filter articles where IsHumanStudy is null
+    /// <summary>
+    /// Queries <c>all_articles</c> for documents where <c>IsHumanStudy</c> is null,
+    /// applies the exclusion keyword filter on Title + Abstract,
+    /// and patches each document with <c>IsFiltered</c>, <c>IsHumanStudy</c>,
+    /// <c>ExcludedKeywords</c>, and <c>ExcludedCategories</c>.
+    /// </summary>
+    public async Task FilterOnHumanStudyNullAsync(CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        var targetFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.IsHumanStudy, null);
+
+        long totalArticles = await _mongoCollection
+            .CountDocumentsAsync(targetFilter, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"Articles with IsHumanStudy = null: {totalArticles}");
+        Console.ResetColor();
+
+        if (totalArticles == 0)
+        {
+            Console.WriteLine("Nothing to process.");
+            return;
+        }
+
+        const int pageSize = 2_000;
+        const int bulkBatchSize = 1_000;
+        int lastSeenId = 0;
+        long processedArticles = 0;
+        long totalUpdated = 0;
+
+        var sort = Builders<ArticleLabelDTO>.Sort.Ascending(a => a.PmcId);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageFilter = Builders<ArticleLabelDTO>.Filter.And(
+                targetFilter,
+                Builders<ArticleLabelDTO>.Filter.Gt(a => a.PmcId, lastSeenId));
+
+            List<ArticleLabelDTO> page = await _mongoCollection
+                .Find(pageFilter)
+                .Sort(sort)
+                .Limit(pageSize)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Count == 0)
+                break;
+
+            lastSeenId = page[^1].PmcId;
+
+            var updateModels = new ConcurrentBag<WriteModel<ArticleLabelDTO>>();
+
+            Parallel.ForEach(page, article =>
+            {
+                var text = string.Concat(
+                    article.Title ?? string.Empty,
+                    " ",
+                    article.AbstractText ?? string.Empty);
+
+                var matchedKeywords = new List<string>();
+                var matchedCategories = new HashSet<string>();
+
+                foreach (var (keyword, category, pattern) in _compiledPatterns)
+                {
+                    if (pattern.IsMatch(text))
+                    {
+                        matchedKeywords.Add(keyword);
+                        if (!string.IsNullOrEmpty(category))
+                            matchedCategories.Add(category);
+                    }
+                }
+
+                var update = Builders<ArticleLabelDTO>.Update
+                    .Set(a => a.IsFiltered, true)
+                    .Set(a => a.IsHumanStudy, matchedKeywords.Count == 0)
+                    .Set(a => a.ExcludedKeywords, matchedKeywords)
+                    .Set(a => a.ExcludedCategories, matchedCategories.Distinct().ToList());
+
+                var docFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.PmcId, article.PmcId);
+                updateModels.Add(new UpdateOneModel<ArticleLabelDTO>(docFilter, update));
+            });
+
+            var modelList = updateModels.ToList();
+            for (int i = 0; i < modelList.Count; i += bulkBatchSize)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = modelList.Skip(i).Take(bulkBatchSize).ToList<WriteModel<ArticleLabelDTO>>();
+                var bulkResult = await _mongoCollection
+                    .BulkWriteAsync(batch, new BulkWriteOptions { IsOrdered = false }, cancellationToken)
+                    .ConfigureAwait(false);
+                totalUpdated += bulkResult.ModifiedCount;
+            }
+
+            processedArticles += page.Count;
+            int percent = totalArticles > 0
+                ? (int)(processedArticles * 100 / totalArticles)
+                : 100;
+            Console.Write($"\r  Filtering: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({processedArticles}/{totalArticles})  ");
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Human study filter complete. Documents updated: {totalUpdated}");
+        Console.ResetColor();
+    }
+    #endregion
+
+    #region Task 10 : Ingredient keyword filter
     /// <summary>
     /// Scans <c>all_articles</c> documents where <c>IsHumanStudy = true</c> and <c>HasFullText = false</c>,
     /// matches Title + Abstract against ingredient keywords loaded from <paramref name="ingredientKeywordsFilePath"/>,

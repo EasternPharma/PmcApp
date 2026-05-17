@@ -17,6 +17,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("10. Ingredient Keyword Filter on all_articles");
     Console.WriteLine("11. Save Ingredient Article PMC IDs to TXT file");
     Console.WriteLine("12. Update Articles from JSON Backup Folder");
+    Console.WriteLine("13. Filter Human Study (re-filter articles where IsHumanStudy is null)");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -59,6 +60,9 @@ async Task GuidelinesAsync()
                 break;
             case 12:
                 await UpdateArticles();
+                break;
+            case 13:
+                await FilterHumanStudyNullAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -314,6 +318,23 @@ async Task UpdateArticles()
     };
     var filter = new PmcArticleFilter(settings);
     await filter.UpdateArticlesFromJsonFolderAsync(folderPath);
+}
+#endregion
+
+#region #13 Method13: Re-filter articles where IsHumanStudy is null
+async Task FilterHumanStudyNullAsync()
+{
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        ExclusionExcelPath = @"D:\PMC\Dataset\2026\PMC safe-exclusion keywords.csv",
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.FilterOnHumanStudyNullAsync();
 }
 #endregion
 
