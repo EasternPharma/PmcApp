@@ -18,6 +18,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("11. Save Ingredient Article PMC IDs to TXT file");
     Console.WriteLine("12. Update Articles from JSON Backup Folder");
     Console.WriteLine("13. Filter Human Study (re-filter articles where IsHumanStudy is null)");
+    Console.WriteLine("14. Backup all_articles to JSON files");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -63,6 +64,9 @@ async Task GuidelinesAsync()
                 break;
             case 13:
                 await FilterHumanStudyNullAsync();
+                break;
+            case 14:
+                await BackupAllArticlesToJsonAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -338,4 +342,21 @@ async Task FilterHumanStudyNullAsync()
 }
 #endregion
 
+#region 14 Method14: Backup all_articles to JSON files
+async Task BackupAllArticlesToJsonAsync()
+{
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        OutputDirectoryPath = @"E:\PMC\all_articles_backup",
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        ReadOnlyMode = true,
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.BackupAllArticlesToJsonAsync();
+}
+#endregion
 await GuidelinesAsync();

@@ -655,9 +655,8 @@ public class PmcArticleFilter
     #region Task 12: Update articles from JSON backup folder
     /// <summary>
     /// Loads all *.json files from <paramref name="folderPath"/>,
-    /// deserializes each file as <see cref="List{ArticleBackupDTO}"/> (snake_case JSON keys),
-    /// maps to <see cref="ArticleLabelDTO"/>, and upserts into the <c>all_articles</c>
-    /// MongoDB collection by PmcId.
+    /// deserializes each file as <see cref="List{ArticleLabelDTO}"/>,
+    /// and upserts into the <c>all_articles</c> MongoDB collection by PmcId.
     /// </summary>
     public async Task UpdateArticlesFromJsonFolderAsync(
         string folderPath,
@@ -700,41 +699,14 @@ public class PmcArticleFilter
             string jsonContent = await File.ReadAllTextAsync(file.FullName, cancellationToken)
                 .ConfigureAwait(false);
 
-            // Deserialize using ArticleBackupDTO which has [JsonProperty] for snake_case keys
-            var backupArticles = JsonConvert.DeserializeObject<List<ArticleBackupDTO>>(jsonContent)
-                                 ?? new List<ArticleBackupDTO>();
+            var articles = JsonConvert.DeserializeObject<List<ArticleLabelDTO>>(jsonContent)
+                           ?? new List<ArticleLabelDTO>();
 
-            if (backupArticles.Count == 0)
+            if (articles.Count == 0)
             {
                 filesDone++;
                 continue;
             }
-
-            // Map ArticleBackupDTO → ArticleLabelDTO
-            var articles = backupArticles.Select(a => new ArticleLabelDTO
-            {
-                PmcId = a.PmcId,
-                PmId = a.PmId.HasValue ? (int?)((int)a.PmId.Value) : null,
-                Doi = a.Doi,
-                Title = a.Title,
-                Category = a.Category,
-                Journal = a.Journal,
-                Publisher = a.Publisher,
-                Volume = a.Volume,
-                Issue = a.Issue,
-                ISSN = a.ISSN,
-                FPage = a.FPage,
-                LPage = a.LPage,
-                Authors = a.Authors,
-                PublishDate = a.PublishDate,
-                AbstractText = a.AbstractText,
-                Keywords = a.Keywords,
-                Sections = a.Sections ?? new Dictionary<string, string>(),
-                HasFullText = a.Sections != null && a.Sections.Count > 0,
-                HasAbstract = !string.IsNullOrEmpty(a.AbstractText),
-                IsFiltered = true,
-                SourceType = 2,
-            }).ToList();
 
             // Step 3: upsert articles by PmcId in batches of 1000
             const int batchSize = 1_000;
@@ -767,6 +739,90 @@ public class PmcArticleFilter
         Console.WriteLine();
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"Update complete. Inserted: {totalUpserted}  |  Updated: {totalModified}  |  Files processed: {filesDone}");
+        Console.ResetColor();
+    }
+    #endregion
+
+    #region Task 14: Backup all_articles to JSON files
+    /// <summary>
+    /// Keyset-paginates the <c>all_articles</c> collection and writes each page as a
+    /// JSON file containing <see cref="List{ArticleLabelDTO}"/>.
+    /// Files are grouped under <c>Folder_1</c>, <c>Folder_2</c>, … (50 JSON files per folder).
+    /// Compatible with <see cref="UpdateArticlesFromJsonFolderAsync"/> (recursive search).
+    /// </summary>
+    public async Task BackupAllArticlesToJsonAsync(CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        string outputDir = Settings.OutputDirectoryPath
+            ?? throw new InvalidOperationException("OutputDirectoryPath must be set in settings.");
+
+        if (!Directory.Exists(outputDir))
+            Directory.CreateDirectory(outputDir);
+
+        long totalCount = await _mongoCollection
+            .CountDocumentsAsync(FilterDefinition<ArticleLabelDTO>.Empty, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"Backing up {totalCount} article(s) to: {outputDir}");
+        Console.ResetColor();
+
+        const int pageSize = 10_000;
+        const int jsonFilesPerFolder = 50;
+        int lastSeenId = 0;
+        long processed = 0;
+        int filesWritten = 0;
+
+        var sort = Builders<ArticleLabelDTO>.Sort.Ascending(a => a.PmcId);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageFilter = Builders<ArticleLabelDTO>.Filter.Gt(a => a.PmcId, lastSeenId);
+            var page = await _mongoCollection
+                .Find(pageFilter)
+                .Sort(sort)
+                .Limit(pageSize)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Count == 0)
+                break;
+
+            lastSeenId = page[^1].PmcId;
+
+            int folderIndex = filesWritten / jsonFilesPerFolder + 1;
+            string batchFolder = Path.Combine(outputDir, $"backup_Pmc_Articles_{folderIndex}");
+            if (!Directory.Exists(batchFolder))
+                Directory.CreateDirectory(batchFolder);
+
+            string fileName = $"Pmc_Articles_{page[0].PmcId}_{page[^1].PmcId}.json";
+            string filePath = Path.Combine(batchFolder, fileName);
+            string json = JsonConvert.SerializeObject(page, Formatting.None);
+            await File.WriteAllTextAsync(filePath, json, cancellationToken).ConfigureAwait(false);
+
+            processed += page.Count;
+            filesWritten++;
+
+            int percent = totalCount > 0 ? (int)(processed * 100 / totalCount) : 100;
+            Console.Write($"\r  Backup: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({processed}/{totalCount})  Folder_{folderIndex}\\{fileName}  ");
+        }
+
+        int folderCount = filesWritten > 0
+            ? (filesWritten - 1) / jsonFilesPerFolder + 1
+            : 0;
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Backup complete. Articles: {processed}  |  Files: {filesWritten}  |  Subfolders: {folderCount}  |  Root: {outputDir}");
         Console.ResetColor();
     }
     #endregion
