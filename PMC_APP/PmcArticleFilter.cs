@@ -812,6 +812,7 @@ public class PmcArticleFilter
         var targetFilter = Builders<ArticleLabelDTO>.Filter.And(
             Builders<ArticleLabelDTO>.Filter.Eq(a => a.IsHumanStudy, true),
             Builders<ArticleLabelDTO>.Filter.Eq(a => a.HasFullText, false));
+        //var targetFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.IsHumanStudy, null);
 
         long totalArticles = await _mongoCollection
             .CountDocumentsAsync(targetFilter, cancellationToken: cancellationToken)
