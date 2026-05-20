@@ -45,7 +45,8 @@ public class PmcArticleFilter
             return;
         }
 
-        LoadExclusionKeywords();
+        if (!string.IsNullOrWhiteSpace(settings.ExclusionExcelPath))
+            LoadExclusionKeywords();
 
         if (settings.OutputType == PmcArticleFilterOutputTypes.JsonFile)
         {
