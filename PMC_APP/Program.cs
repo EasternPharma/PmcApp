@@ -19,6 +19,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("12. Update Articles from JSON Backup Folder");
     Console.WriteLine("13. Filter Human Study (re-filter articles where IsHumanStudy is null)");
     Console.WriteLine("14. Backup all_articles to JSON files");
+    Console.WriteLine("15. Restore JSON files from Backup Folder to MongoDB");
 
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -67,6 +68,9 @@ async Task GuidelinesAsync()
                 break;
             case 14:
                 await BackupAllArticlesToJsonAsync();
+                break;
+            case 15:
+                await RestoreJsonFilesToMongoDBAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -359,4 +363,23 @@ async Task BackupAllArticlesToJsonAsync()
     await filter.BackupAllArticlesToJsonAsync();
 }
 #endregion
+
+#region #15 Method15: Restore Json Files from Backup Folder to MongoDB
+async Task RestoreJsonFilesToMongoDBAsync()
+{
+    string folderPath = @"/media/breg/adata_512/pmc_data/";
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        ReadOnlyMode = false,
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.RestoreJsonFilesToMongoDBAsync(folderPath);
+}
+#endregion
+
 await GuidelinesAsync();

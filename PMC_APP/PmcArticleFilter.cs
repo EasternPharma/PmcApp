@@ -1,4 +1,5 @@
 ﻿using ExcelDataReader;
+using ExcelDataReader.Log;
 using MongoDB.Driver;
 using Newtonsoft.Json;
 using PMC_APP.DTOs;
@@ -1074,6 +1075,173 @@ public class PmcArticleFilter
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"Ingredient review complete. Documents updated: {totalUpdated}");
         Console.ResetColor();
+    }
+    #endregion
+
+
+    #region Task 15: Restore Json Files from Backup Folder to MongoDB
+    /// <summary>
+    /// Recursively scans <paramref name="folderPath"/> for *.json files,
+    /// deserializes each as <see cref="List{ArticleLabelDTO}"/>, and upserts every
+    /// article into the <c>all_articles</c> MongoDB collection by PmcId.
+    /// Re-entrant safe: existing documents are replaced, new ones are inserted.
+    /// </summary>
+    public async Task RestoreJsonFilesToMongoDBAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb and connection settings are provided.");
+            Console.ResetColor();
+            return;
+        }
+
+        // ── Step 1: discover all JSON files ──────────────────────────────────
+        if (!Directory.Exists(folderPath))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Folder not found: {folderPath}");
+            Console.ResetColor();
+            return;
+        }
+
+        var jsonFiles = Directory.GetFiles(folderPath, "*.json", SearchOption.AllDirectories)
+            .Select(p => new FileInfo(p))
+            .OrderBy(f => f.Name)
+            .ToList();
+
+        if (jsonFiles.Count == 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"No JSON files found in: {folderPath}");
+            Console.ResetColor();
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"Found {jsonFiles.Count} JSON file(s) in: {folderPath}");
+        Console.ResetColor();
+
+        // ── Step 2: process each file ─────────────────────────────────────────
+        const int batchSize = 1_000;
+        int filesDone = 0;
+        int filesSkipped = 0;
+        long totalUpserted = 0;
+        long totalModified = 0;
+        long totalArticles = 0;
+
+        var startTime = DateTime.Now;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"  Start time : {startTime:yyyy-MM-dd HH:mm:ss}");
+        Console.ResetColor();
+
+        foreach (var file in jsonFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            List<ArticleLabelDTO>? articles = null;
+            try
+            {
+                string jsonContent = await File.ReadAllTextAsync(file.FullName, cancellationToken)
+                    .ConfigureAwait(false);
+                articles = JsonConvert.DeserializeObject<List<ArticleLabelDTO>>(jsonContent);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"  [SKIP] Failed to read/deserialize {file.Name}: {ex.Message}");
+                Console.ResetColor();
+                filesSkipped++;
+                filesDone++;
+                continue;
+            }
+
+            if (articles == null || articles.Count == 0)
+            {
+                filesSkipped++;
+                filesDone++;
+                continue;
+            }
+
+            // ── Step 3: upsert in batches of 1000 ────────────────────────────
+            int totalBatches = (int)Math.Ceiling(articles.Count / (double)batchSize);
+
+            for (int b = 0; b < totalBatches; b++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var batch = articles.Skip(b * batchSize).Take(batchSize).ToList();
+                var writeModels = batch.Select(article =>
+                {
+                    var docFilter = Builders<ArticleLabelDTO>.Filter.Eq(a => a.PmcId, article.PmcId);
+                    return new ReplaceOneModel<ArticleLabelDTO>(docFilter, article) { IsUpsert = true };
+                }).ToList<WriteModel<ArticleLabelDTO>>();
+
+                try
+                {
+                    var bulkResult = await _mongoCollection
+                        .BulkWriteAsync(writeModels, new BulkWriteOptions { IsOrdered = false }, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    totalUpserted += bulkResult.Upserts.Count;
+                    totalModified += bulkResult.ModifiedCount;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine();
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"  [ERROR] MongoDB write failed (file: {file.Name}, batch {b + 1}/{totalBatches}): {ex.Message}");
+                    Console.ResetColor();
+                }
+            }
+
+            totalArticles += articles.Count;
+            filesDone++;
+
+            int percent = (int)((double)filesDone / jsonFiles.Count * 100);
+
+            // elapsed and estimated remaining
+            var elapsed = sw.Elapsed;
+            TimeSpan remaining = filesDone > 0
+                ? TimeSpan.FromSeconds(elapsed.TotalSeconds / filesDone * (jsonFiles.Count - filesDone))
+                : TimeSpan.Zero;
+
+            Console.Write(
+                $"\r  Restoring: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  " +
+                $"({filesDone}/{jsonFiles.Count})  " +
+                $"Elapsed: {FormatTimeSpan(elapsed)}  " +
+                $"Remaining: {FormatTimeSpan(remaining)}  " +
+                $"{file.Name,-40}  ");
+        }
+
+        sw.Stop();
+        var endTime = DateTime.Now;
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Restore complete. Articles: {totalArticles}  |  Inserted: {totalUpserted}  |  Updated: {totalModified}  |  Files: {filesDone - filesSkipped}/{jsonFiles.Count}  |  Skipped: {filesSkipped}");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"  Start time  : {startTime:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"  End time    : {endTime:yyyy-MM-dd HH:mm:ss}");
+        Console.WriteLine($"  Total time  : {FormatTimeSpan(sw.Elapsed)}");
+        Console.ResetColor();
+    }
+    #endregion
+
+    #region Helpers
+    private static string FormatTimeSpan(TimeSpan ts)
+    {
+        if (ts.TotalHours >= 1)
+            return $"{(int)ts.TotalHours:D2}h {ts.Minutes:D2}m {ts.Seconds:D2}s";
+        if (ts.TotalMinutes >= 1)
+            return $"{ts.Minutes:D2}m {ts.Seconds:D2}s";
+        return $"{ts.Seconds:D2}s";
     }
     #endregion
 }
