@@ -368,6 +368,7 @@ async Task BackupAllArticlesToJsonAsync()
 async Task RestoreJsonFilesToMongoDBAsync()
 {
     string folderPath = @"/media/breg/adata_512/pmc_data/";
+    //string folderPath = @"E:\PMC\all_articles_backup\backup_Pmc_Articles_23";
     var settings = new PmcArticleFilterSettingsDTO
     {
         OutputType = PmcArticleFilterOutputTypes.Mongodb,

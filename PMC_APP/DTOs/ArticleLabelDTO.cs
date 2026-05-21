@@ -63,6 +63,9 @@ public class ArticleLabelDTO : ArticleDTO
     /// </summary>
     public List<string>? Ingredients { get; set; }
 
+    // Send to LLM for labeling or not.
+    public bool SendToLlm { get; set; } = false;
+
     /// <summary>
     /// Indicates whether the article was labeled using an LLM.
     /// </summary>
@@ -73,8 +76,15 @@ public class ArticleLabelDTO : ArticleDTO
     /// </summary>
     public int? LlmLabelId { get; set; }
 
+    // LLM Model used for labeling, e.g., "gpt-4-0613".
+    public string LlmModel { get; set; } = string.Empty;
+
     /// <summary>
     /// Reasoning provided by the LLM for the assigned label.
     /// </summary>
-    public string? LlmReasoning { get; set; }
+    public string LlmReasoning { get; set; } = string.Empty;
+
+
+    // 0 to 1 confidence score provided by the LLM for the assigned label.
+    public double LlmConfidence { get; set; } = -1;
 }
