@@ -20,7 +20,8 @@ async Task GuidelinesAsync()
     Console.WriteLine("13. Filter Human Study (re-filter articles where IsHumanStudy is null)");
     Console.WriteLine("14. Backup all_articles to JSON files");
     Console.WriteLine("15. Restore JSON files from Backup Folder to MongoDB");
-
+    Console.WriteLine("16. Get White label articles from MongoDB");
+    
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
     if (int.TryParse(choiceInput, out int choice))
@@ -71,6 +72,9 @@ async Task GuidelinesAsync()
                 break;
             case 15:
                 await RestoreJsonFilesToMongoDBAsync();
+                break;
+            case 16:
+                await GetWhiteLabelArticlesAsync();
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");
@@ -380,6 +384,25 @@ async Task RestoreJsonFilesToMongoDBAsync()
     };
     var filter = new PmcArticleFilter(settings);
     await filter.RestoreJsonFilesToMongoDBAsync(folderPath);
+}
+#endregion
+
+#region #16 Method16: Get White label articles from MongoDB
+async Task GetWhiteLabelArticlesAsync()
+{
+    string outputDirectory = "/media/breg/SSD_4TB_Sata/white_articles/";
+    var settings = new PmcArticleFilterSettingsDTO
+    {
+        OutputType = PmcArticleFilterOutputTypes.Mongodb,
+        OutputDirectoryPath = outputDirectory,
+        MongodbHost = "localhost",
+        MongodbPort = 27017,
+        MongodbDatabaseName = "pmc",
+        MongodbOutputCollectionName = "all_articles",
+        ReadOnlyMode = true,
+    };
+    var filter = new PmcArticleFilter(settings);
+    await filter.GetWhiteLabelArticlesAsync();
 }
 #endregion
 

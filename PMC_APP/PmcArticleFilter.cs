@@ -1079,6 +1079,91 @@ public class PmcArticleFilter
     }
     #endregion
 
+    #region Task 16: Get White label articles from MongoDB
+    /// <summary>
+    /// Queries <c>all_articles</c> for documents where <c>IsLlmLabeled</c> is true
+    /// and <c>LlmLabelId</c> equals 1, then exports them to JSON files in pages of 10 000.
+    /// </summary>
+    public async Task GetWhiteLabelArticlesAsync(CancellationToken cancellationToken = default)
+    {
+        if (_mongoCollection is null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("MongoDB output collection is not initialized. Ensure OutputType is Mongodb.");
+            Console.ResetColor();
+            return;
+        }
+
+        string outputDir = Settings.OutputDirectoryPath
+            ?? throw new InvalidOperationException("OutputDirectoryPath must be set in settings.");
+
+        if (!Directory.Exists(outputDir))
+            Directory.CreateDirectory(outputDir);
+
+        var queryFilter = Builders<ArticleLabelDTO>.Filter.And(
+            Builders<ArticleLabelDTO>.Filter.Eq(a => a.IsLlmLabeled, true),
+            Builders<ArticleLabelDTO>.Filter.Eq(a => a.LlmLabelId, 1));
+
+        long totalCount = await _mongoCollection
+            .CountDocumentsAsync(queryFilter, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"White label articles (IsLlmLabeled=true, LlmLabelId=1): {totalCount}");
+        Console.WriteLine($"Exporting to: {outputDir}");
+        Console.ResetColor();
+
+        if (totalCount == 0)
+        {
+            Console.WriteLine("Nothing to export.");
+            return;
+        }
+
+        const int pageSize = 10_000;
+        int lastSeenId = 0;
+        long processed = 0;
+        int filesWritten = 0;
+
+        var sort = Builders<ArticleLabelDTO>.Sort.Ascending(a => a.PmcId);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageFilter = Builders<ArticleLabelDTO>.Filter.And(
+                queryFilter,
+                Builders<ArticleLabelDTO>.Filter.Gt(a => a.PmcId, lastSeenId));
+
+            var page = await _mongoCollection
+                .Find(pageFilter)
+                .Sort(sort)
+                .Limit(pageSize)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (page.Count == 0)
+                break;
+
+            lastSeenId = page[^1].PmcId;
+
+            string fileName = $"White_Label_Articles_{page[0].PmcId}_{page[^1].PmcId}.json";
+            string filePath = Path.Combine(outputDir, fileName);
+            string json = JsonConvert.SerializeObject(page, Formatting.None);
+            await File.WriteAllTextAsync(filePath, json, cancellationToken).ConfigureAwait(false);
+
+            processed += page.Count;
+            filesWritten++;
+
+            int percent = totalCount > 0 ? (int)(processed * 100 / totalCount) : 100;
+            Console.Write($"\r  Export: [{new string('#', percent / 2)}{new string('-', 50 - percent / 2)}] {percent,3}%  ({processed}/{totalCount})  {fileName}  ");
+        }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Export complete. Articles: {processed}  |  Files: {filesWritten}  |  Directory: {outputDir}");
+        Console.ResetColor();
+    }
+    #endregion
 
     #region Task 15: Restore Json Files from Backup Folder to MongoDB
     /// <summary>
