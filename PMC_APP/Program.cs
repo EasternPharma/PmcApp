@@ -1,6 +1,13 @@
 ﻿using Newtonsoft.Json;
 using PMC_APP;
 using PMC_APP.DTOs;
+using PMC_APP.IngredientSearch;
+
+if (args.Length > 0 && args[0] == "ingredient-frequency")
+{
+    await IngredientFrequencyCommand.RunAsync(args[1..]);
+    return;
+}
 
 #region GuidLines
 async Task GuidelinesAsync()
@@ -21,6 +28,7 @@ async Task GuidelinesAsync()
     Console.WriteLine("14. Backup all_articles to JSON files");
     Console.WriteLine("15. Restore JSON files from Backup Folder to MongoDB");
     Console.WriteLine("16. Get White label articles from MongoDB");
+    Console.WriteLine("17. Label ingredient frequencies in title, abstract and full text + Excel report");
     
     Console.Write("Enter your choice item from list: ");
     var choiceInput = Console.ReadLine();
@@ -75,6 +83,9 @@ async Task GuidelinesAsync()
                 break;
             case 16:
                 await GetWhiteLabelArticlesAsync();
+                break;
+            case 17:
+                await IngredientFrequencyCommand.RunAsync(Array.Empty<string>());
                 break;
             default:
                 Console.WriteLine("Invalid choice. Please select from list");

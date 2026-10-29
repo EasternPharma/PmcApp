@@ -63,6 +63,26 @@ public class ArticleLabelDTO : ArticleDTO
     /// </summary>
     public List<string>? Ingredients { get; set; }
 
+    /// <summary>True only after title, abstract and full-text ingredient counts were saved.</summary>
+    public bool IsIngredientFrequencyLabeled { get; set; }
+
+    /// <summary>Migration snapshot: nonblank abstract and at least one nonblank section body.</summary>
+    public bool IsIngredientFrequencyEligible { get; set; }
+
+    public List<IngredientKeywordCountDTO> IngredientTitleCounts { get; set; } = new();
+    public bool HasIngredientInTitle { get; set; }
+
+    public List<IngredientKeywordCountDTO> IngredientAbstractCounts { get; set; } = new();
+    public bool HasIngredientInAbstract { get; set; }
+
+    /// <summary>Counts summed across section bodies; phrases never span sections.</summary>
+    public List<IngredientKeywordCountDTO> IngredientSectionCounts { get; set; } = new();
+    public bool HasIngredientInSections { get; set; }
+
+    /// <summary>Matcher policy plus SHA-256 of the effective keyword list, for safe resumption.</summary>
+    public string? IngredientFrequencyVersion { get; set; }
+    public DateTime? IngredientFrequencyLabeledAt { get; set; }
+
     // Send to LLM for labeling or not.
     public bool SendToLlm { get; set; } = false;
 
